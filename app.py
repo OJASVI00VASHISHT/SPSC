@@ -2,7 +2,7 @@
 import streamlit as st
 import random
 import matplotlib.pyplot as plt
-from collections import Counter
+from collections import Counter, deque
 from db_utils import init_db, add_move, get_user_history
 
 init_db()
@@ -33,39 +33,52 @@ if username:
         history = get_user_history(username)
 
         def predict_user_move(history):
-            if not history or len(history) < 3:
+            if not history:
                 return random.choice(choices)
             
-            # Get all user moves
             user_moves = [move[0] for move in history]
+            last_move = user_moves[-1]
             
-            # Pattern detection for repeated moves
-            last_three = user_moves[-3:]
-            if len(set(last_three)) == 1:  # All same moves
-                return counter_moves[last_three[0]]
+            # 1. Immediate punishment for repeating same move
+            if len(user_moves) >= 2 and user_moves[-1] == user_moves[-2]:
+                return counter_moves[last_move]
             
-            # Check for simple patterns (like Rock-Paper-Scissors repeating)
-            if len(user_moves) >= 3:
-                pattern = user_moves[-3:]
-                if pattern == ["Rock", "Paper", "Scissors"]:
-                    return "Rock"  # Predicts next in sequence would be Rock again
-                if pattern == ["Paper", "Scissors", "Rock"]:
-                    return "Paper"
-                if pattern == ["Scissors", "Rock", "Paper"]:
-                    return "Scissors"
+            # 2. Detect longer streaks (3+ repeats)
+            streak_length = 1
+            for i in range(2, min(5, len(user_moves)) + 1):
+                if user_moves[-i] == last_move:
+                    streak_length += 1
+                else:
+                    break
             
-            # Frequency analysis with different window sizes
-            for window in [5, 10, len(user_moves)]:
-                if len(user_moves) >= window:
-                    window_moves = user_moves[-window:]
-                    freq = Counter(window_moves)
-                    most_common = freq.most_common(1)[0][0]
-                    # Add some randomness to not be completely predictable
-                    if random.random() < 0.8:  # 80% chance to counter most common
-                        return counter_moves[most_common]
+            if streak_length >= 3:
+                return counter_moves[last_move]
             
-            # Fallback to random if no clear pattern
-            return random.choice(choices)
+            # 3. Frequency analysis with weighted randomness
+            move_counts = Counter(user_moves)
+            total = sum(move_counts.values())
+            probabilities = {
+                move: (count/total)*0.7 + 0.1  # 70% weight to history, 10% base chance
+                for move, count in move_counts.items()
+            }
+            
+            # Add missing moves with base probability
+            for move in choices:
+                if move not in probabilities:
+                    probabilities[move] = 0.1
+            
+            # Normalize probabilities
+            total_prob = sum(probabilities.values())
+            probabilities = {k: v/total_prob for k, v in probabilities.items()}
+            
+            # Choose counter to predicted move
+            predicted = random.choices(
+                list(probabilities.keys()),
+                weights=list(probabilities.values()),
+                k=1
+            )[0]
+            
+            return counter_moves[predicted]
 
         ai_choice = predict_user_move(history)
 
